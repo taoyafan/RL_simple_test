@@ -90,12 +90,12 @@ class DQN():
         Q_value = self.Q_value.eval(feed_dict = {
             self.state_input:[state]
             })[0]
+        self.epsilon -= (INITIAL_EPSILON - FINAL_EPSILON)/10000
         if random.random() <= self.epsilon:
             return random.randint(0,self.action_dim - 1)
         else:
             return np.argmax(Q_value)
 
-        self.epsilon -= (INITIAL_EPSILON - FINAL_EPSILON)/10000
 
     def action(self,state):
         return np.argmax(self.Q_value.eval(feed_dict = {
@@ -148,7 +148,7 @@ def main():
                         break
             ave_reward = total_reward/TEST
             print("episode: ",episode,"Evaluation Average Reward:",ave_reward)
-            if ave_reward >= 200:
+            if ave_reward >= 250:
                 state = env.reset()
                 while True:
                     env.render()
