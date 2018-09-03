@@ -37,7 +37,7 @@ class ValueFun:
 
     """
 
-    def __init__(self, env, discount_factor=1, batch_size=32, replay_size=10000, summaries_dir=None):
+    def __init__(self, env, discount_factor=0.9, batch_size=32, replay_size=10000, summaries_dir=None):
         self.discount_factor = discount_factor
         self.state_dim = env.observation_space.shape[0]
         self.action_dim = env.action_space.n
@@ -47,8 +47,8 @@ class ValueFun:
 
         # Build model with tf.session
         self.sess = tf.InteractiveSession()
+        self.global_step = tf.Variable(0, name="global_step", trainable=False)
         self.build_model()
-        global_step = tf.Variable(0, name="global_step", trainable=False)
         self.sess.run(tf.global_variables_initializer())
 
         # If saving summaries
@@ -80,7 +80,7 @@ class ValueFun:
         # Calculate the loss
         Q_action = tf.reduce_sum(tf.multiply(self.value_output, self.action_input), reduction_indices=1)
         self.cost = tf.reduce_mean(tf.square(self.actual_value - Q_action))
-        self.optimizer = tf.train.RMSPropOptimizer(0.003, 0.99, 0.0, 1e-6).minimize(self.cost, global_step=tf.train.get_global_step())
+        self.optimizer = tf.train.RMSPropOptimizer(0.01, 0.99, 0.0, 1e-6).minimize(self.cost, global_step=self.global_step)
 
         self.summaries = tf.summary.merge([
                     tf.summary.scalar("loss", self.cost),
