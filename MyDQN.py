@@ -1,20 +1,51 @@
 # -*- coding: UTF-8 -*-
+"""
+本文件为 DQN 实现代码，测试环境为 openAI gym 中的 CartPole-v0
+作者：陕西科技大学 陶亚凡
+2018-9-3
+
+参考：
+Playing Atari with Deep Reinforcement Learning：
+    http://cn.arxiv.org/pdf/1312.5602v1
+
+github-dennybritz/reinforcement-learning:
+    https://github.com/dennybritz/reinforcement-learning
+
+David Silver's Reinforcement Learning Course (UCL, 2015):
+    https://www.bilibili.com/video/av10135631
+
+"""
+
 import gym
 import tensorflow as tf
 import numpy as np
 import os
 import psutil
+from collections import deque, namedtuple
+import random
 
 
-class ValueFun():
+class ValueFun:
     """
-    Value fiunction, including building model, predict and update
+    Value function, including building model, predict and update
+
+    build_model() 创建值函数的神经网络模型，在初始化时调用，若要修改网络模型则修改此函数
+
+    predict() 用来预测给定状态的每个动作的值，使用 build_model() 所创建的模型
+
+    update() 用来训练当前的模型，需要输入当前的 state, action, reward, next_state, done
+
     """
 
-    def __init__(self, env, discount_factor=1, summaries_dir=None):
+    def __init__(self, env, discount_factor=1, batch_size=32, replay_size=10000, summaries_dir=None):
         self.discount_factor = discount_factor
         self.state_dim = env.observation_space.shape[0]
         self.action_dim = env.action_space.n
+        self.batch_size = batch_size
+        self.replay_size = replay_size
+        self.replay_buffer = []
+
+        # Build model with tf.session
         self.sess = tf.InteractiveSession()
         self.build_model()
         global_step = tf.Variable(0, name="global_step", trainable=False)
@@ -83,37 +114,53 @@ class ValueFun():
             next_value = np.max(self.predict(next_state))
             target_value = reward + (self.discount_factor * next_value)
 
-        # Expand dimension 0
-        state = np.expand_dims(state, 0)
-        action_onehot = np.expand_dims(action_onehot, 0)
-        target_value = np.expand_dims(target_value, 0)
-        feed_dict = {self.state_input: state, self.action_input: action_onehot, self.actual_value: target_value}
+        Transition = namedtuple("Transition", ["state", "action", "target"])
+        self.replay_buffer.append(Transition(state, action_onehot, target_value))
 
-        summaries, _, global_step = self.sess.run(
-            [self.summaries, self.optimizer, tf.train.get_global_step()], feed_dict)
+        if len(self.replay_buffer) > self.batch_size:
 
-        if self.summary_writer:
-            self.summary_writer.add_summary(summaries, global_step)
+            if len(self.replay_buffer) > self.replay_size:
+                self.replay_buffer.pop(0)
 
-# ValueFun() test:
-env = gym.make('CartPole-v0')
-value_fun = ValueFun(env, discount_factor=0)
-test_state = [1, 1, 1, 1]
-value, fc1 = value_fun.predict(test_state, if_debug=True)
-print("Value before train : {}".format(value))
-print("fc1 : {}".format(fc1))
+            # Sample a batch
+            sample = random.sample(self.replay_buffer, self.batch_size)
+            state_batch, action_batch, target_batch = map(np.array, zip(*sample))
 
-# Train value function so that the value of action 0 for test_state in 1
-for i in range(100):
-    value_fun.update(test_state, action=0, reward=20, done=1, next_state=test_state)
-    value_fun.update(test_state, action=1, reward=-1, done=1, next_state=test_state)
+            # sess.run
+            feed_dict = {self.state_input: state_batch, self.action_input: action_batch, self.actual_value: target_batch}
+            summaries, _, global_step = self.sess.run(
+                [self.summaries, self.optimizer, tf.train.get_global_step()], feed_dict)
 
-value, fc1 = value_fun.predict(test_state, if_debug=True)
-print("Value after train : {}".format(value))
-print("fc1 : {}".format(fc1))
+            # Write summaries
+            if self.summary_writer:
+                self.summary_writer.add_summary(summaries, global_step)
 
 
-class Policy():
+if False:
+    # 这部分代码用来测试 ValueFun 这个类是否正确
+    # 若不需要测试，则可以将 True 改为 False
+
+    env = gym.make('CartPole-v0')
+    value_fun = ValueFun(env, discount_factor=0)
+    test_state = [1, 1, 1, 1]
+    value, fc1 = value_fun.predict(test_state, if_debug=True)
+    print("Value before train : {}".format(value))
+    print("fc1 : {}".format(fc1))
+
+    # Train value function so that the value of action 0 for test_state in 1
+    for i in range(100):
+        value_fun.update(test_state, action=0, reward=20, done=1, next_state=test_state)
+        value_fun.update(test_state, action=1, reward=-1, done=1, next_state=test_state)
+
+    value, fc1 = value_fun.predict(test_state, if_debug=True)
+    print("Value after train : {}".format(value))
+    print("fc1 : {}".format(fc1))
+
+
+class Policy:
+    """
+    该类表示的是 agent 的策略，也就是根据当前的状态，计算动作值函数 Q 值，选择动作，epsilon 的概率随机选择，否则选择最优动作
+    """
 
     def __init__(self, value_fun):
         self.value_fun = value_fun
@@ -128,7 +175,10 @@ class Policy():
         return action
 
 
-class Work():
+class Work:
+    """
+    包括训练和测试两个函数，训练时 epsilon=0.1， 测试时 epsilon=0
+    """
 
     def __init__(self, env, summaries_dir=None):
         self.env = env
@@ -195,10 +245,11 @@ class Work():
 
 
 def main():
-    train_episode_each = 100
-    train_episode = 10000
-    test_episode = 10
-    num_step = 300
+    train_episode_each = 100    # 每次训练的次数
+    train_episode = 100000      # 一共训练的次数
+    test_episode = 10       # 每次测试的次数
+    num_step = 300      # 每次训练或执行的步数上限
+
     env = gym.make('CartPole-v0')
     experiment_dir = os.path.abspath("./MyDQN/{}".format(env.spec.id))
     work = Work(env, summaries_dir=experiment_dir)
